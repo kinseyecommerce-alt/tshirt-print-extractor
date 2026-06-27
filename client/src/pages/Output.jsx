@@ -108,7 +108,13 @@ export default function Output() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Preview + zoom */}
         <div className="space-y-4 lg:col-span-2">
-          <BeforeAfter beforeSrc={sourceUrl(job.id)} afterSrc={src} />
+          {job.kind === 'generate' ? (
+            <div className="checkerboard flex items-center justify-center rounded-xl border border-slate-800 p-4">
+              <img src={src} alt={job.source} className="max-h-96 max-w-full object-contain" />
+            </div>
+          ) : (
+            <BeforeAfter beforeSrc={sourceUrl(job.id)} afterSrc={src} />
+          )}
 
           <div className="card">
             <div className="mb-2 flex items-center justify-between">
@@ -134,13 +140,15 @@ export default function Output() {
             </div>
           </div>
 
-          {/* Functional manual crop editor */}
-          <CropEditor
-            src={sourceUrl(job.id)}
-            onApply={applyCrop}
-            onReset={revertToAi}
-            busy={reprocessing}
-          />
+          {/* Functional manual crop editor (extraction jobs only) */}
+          {job.kind !== 'generate' && (
+            <CropEditor
+              src={sourceUrl(job.id)}
+              onApply={applyCrop}
+              onReset={revertToAi}
+              busy={reprocessing}
+            />
+          )}
 
           {/* Remaining editor tools still stubbed for this version */}
           <div className="card">

@@ -22,6 +22,7 @@ import { OUTPUTS_DIR, UPLOADS_DIR, outputFileName, ensureDir } from '../utils/fi
 import { detectPrintArea } from './openai.js';
 import { downloadImage } from './scraper.js';
 import { updateJob } from './jobStore.js';
+import { generateDesign } from './designGenerator.js';
 
 /** Clamp a crop rectangle so it always sits inside the image bounds. */
 function clampCrop({ x, y, width, height }, dimensions) {
@@ -50,6 +51,11 @@ const MODE_CONFIG = {
  */
 export async function processJob(job) {
   ensureDir(OUTPUTS_DIR);
+
+  // Generate-kind jobs create brand-new artwork instead of extracting a print.
+  if (job.kind === 'generate') {
+    return generateJob(job);
+  }
 
   // 1. Resolve the source image to a local file path.
   let inputPath = job.inputPath;
@@ -145,6 +151,53 @@ export async function processJob(job) {
     mode,
     transparencyRatio,
     sourceDimensions: dimensions,
+  });
+
+  return { outputFile: outName, detection, quality };
+}
+
+/**
+ * Generate-kind pipeline: create a brand-new transparent design from the job's
+ * text prompt, save it, and run the quality checker on the result.
+ * @param {object} job
+ * @returns {Promise<{outputFile:string, detection:object, quality:object}>}
+ */
+async function generateJob(job) {
+  if (!job.prompt) throw new Error('A text prompt is required to generate a design.');
+
+  const mode = MODE_CONFIG[job.mode] ? job.mode : 'dtf_ready';
+  const { buffer, source, note } = await generateDesign(job.prompt, {
+    size: job.genSize,
+    mode,
+  });
+
+  // Light cleanup pass; keep the alpha channel intact.
+  const cleaned = await sharp(buffer)
+    .ensureAlpha()
+    .sharpen({ sigma: 0.5 })
+    .png({ compressionLevel: 9 })
+    .withMetadata({ density: 300 })
+    .toBuffer();
+
+  const outName = outputFileName(job.prompt.slice(0, 40) || 'design');
+  const outPath = path.join(OUTPUTS_DIR, outName);
+  await sharp(cleaned).toFile(outPath);
+
+  const meta = await sharp(outPath).metadata();
+  const detection = {
+    print_found: true,
+    garment_type: 'n/a',
+    print_type: 'generated',
+    confidence: source === 'openai' ? 0.9 : 0.5,
+    recommended_mode: mode,
+    source,
+    note,
+  };
+
+  const quality = await buildQualityReport(outPath, detection, {
+    mode,
+    transparencyRatio: 0.5, // generated art is created on transparent canvas
+    sourceDimensions: { width: meta.width || 0, height: meta.height || 0 },
   });
 
   return { outputFile: outName, detection, quality };

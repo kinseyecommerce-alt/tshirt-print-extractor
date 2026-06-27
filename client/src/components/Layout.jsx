@@ -7,6 +7,7 @@ import { useAuth } from '../auth.jsx';
 
 const NAV = [
   { to: '/', label: 'Dashboard', end: true },
+  { to: '/create', label: 'Create Design' },
   { to: '/upload/single', label: 'Single Upload' },
   { to: '/upload/bulk', label: 'Bulk Upload' },
   { to: '/url/single', label: 'Single URL' },

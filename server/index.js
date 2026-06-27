@@ -12,6 +12,7 @@ import { UPLOADS_DIR, OUTPUTS_DIR, ensureDir } from './utils/files.js';
 import authRoutes from './routes/auth.js';
 import uploadRoutes from './routes/upload.js';
 import urlRoutes from './routes/url.js';
+import createRoutes from './routes/create.js';
 import jobRoutes from './routes/jobs.js';
 import downloadRoutes from './routes/download.js';
 
@@ -69,6 +70,7 @@ app.get('/api/health', (_req, res) => res.json({ ok: true }));
 app.use('/api', authRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/url', urlRoutes);
+app.use('/api/create', createRoutes);
 app.use('/api/jobs', jobRoutes);
 app.use('/api', downloadRoutes);
 

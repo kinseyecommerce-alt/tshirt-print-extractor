@@ -13,6 +13,11 @@ detection (with a heuristic fallback when no API key is set).
 
 ## ✨ Features
 
+- **Create Design (NEW)** — generate a brand-new print from a text prompt
+  (text → transparent PNG) using OpenAI image generation (`gpt-image-1`,
+  transparent background). Single or bulk (one design per prompt line), with
+  square / portrait / landscape canvases. Falls back to a typographic
+  placeholder when no API key is set, so the feature works end-to-end.
 - **Required session login** (username/password from environment variables).
 - **6 input modes**
   1. Single image upload
@@ -168,6 +173,8 @@ Open <http://localhost:3001>.
 | POST | `/api/url/single` | Job from a single URL/image |
 | POST | `/api/url/bulk` | Jobs from pasted URLs |
 | POST | `/api/url/csv` | Jobs from a CSV/Excel of URLs |
+| POST | `/api/create/single` | Generate one design from a text prompt |
+| POST | `/api/create/bulk` | Generate one design per prompt line |
 | GET | `/api/jobs` | List jobs (`?batchId=` filter) |
 | GET | `/api/jobs/:id` | Get one job |
 | POST | `/api/jobs/:id/retry` | Retry a job |

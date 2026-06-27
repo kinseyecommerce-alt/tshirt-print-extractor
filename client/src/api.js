@@ -45,6 +45,12 @@ export const submitBulkUrls = (payload) =>
 export const submitCsvUrls = (formData) =>
   api.post('/url/csv', formData).then((r) => r.data);
 
+// --- Create (generate new designs) -----------------------------------------
+export const createDesign = (payload) =>
+  api.post('/create/single', payload).then((r) => r.data);
+export const createDesignsBulk = (payload) =>
+  api.post('/create/bulk', payload).then((r) => r.data);
+
 // --- Jobs -------------------------------------------------------------------
 export const fetchJobs = (batchId) =>
   api.get('/jobs', { params: batchId ? { batchId } : {} }).then((r) => r.data);
