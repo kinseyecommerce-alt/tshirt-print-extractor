@@ -38,10 +38,11 @@ detection (with a heuristic fallback when no API key is set).
 - **Bulk processing** — queued jobs with `pending / processing / completed /
   failed` status, progress bar, retry, **Download all as ZIP**, and a **CSV
   report** (`source, status, output file, error`).
-- **Editor / viewer** — before/after slider, transparent checkerboard preview,
-  zoom, export size options (2000 / 3000 / 4500 / 5000px), and placeholder
-  tools (crop, rotate, perspective, magic erase, restore, edge cleanup,
-  undo/redo).
+- **Editor / viewer** — **functional manual crop** (draw a box and re-extract,
+  overriding AI detection, with revert-to-AI), before/after slider, transparent
+  checkerboard preview, zoom, export size options (2000 / 3000 / 4500 / 5000px),
+  and placeholder tools (rotate, perspective, magic erase, restore, edge
+  cleanup, undo/redo).
 - **Auto file naming** — `original-name_print.png`.
 - **Legal/safety checkbox** — processing is blocked until the user confirms
   ownership/permission.
@@ -170,6 +171,8 @@ Open <http://localhost:3001>.
 | GET | `/api/jobs` | List jobs (`?batchId=` filter) |
 | GET | `/api/jobs/:id` | Get one job |
 | POST | `/api/jobs/:id/retry` | Retry a job |
+| POST | `/api/jobs/:id/reprocess` | Re-run with a manual crop / different mode |
+| GET | `/api/jobs/:id/source` | Stream the original source image |
 | GET | `/api/download/:filename` | Download a PNG (`?size=2000…5000`) |
 | GET | `/api/download-zip/:batchId` | Download all batch outputs as ZIP |
 | GET | `/api/report/:batchId` | CSV report for a batch |
@@ -207,8 +210,8 @@ The MVP is fully functional for: login, single/bulk upload, single/bulk URL,
 AI print-area detection, crop, transparent PNG export, ZIP download, and job
 history. The following are intentional placeholders for a later version:
 
-- Interactive editor tools (manual crop box, rotate, perspective correction,
-  magic erase / restore brushes, undo/redo).
+- Remaining editor tools (rotate, perspective correction, magic erase /
+  restore brushes, undo/redo). Manual crop is already functional.
 - **AI Recreate Mode** generative reconstruction (needs a generative model).
 - Real source↔output **similarity score** (currently approximated from
   detection confidence).

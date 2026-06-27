@@ -21,6 +21,18 @@ import sharp from 'sharp';
 import { OUTPUTS_DIR, UPLOADS_DIR, outputFileName, ensureDir } from '../utils/files.js';
 import { detectPrintArea } from './openai.js';
 import { downloadImage } from './scraper.js';
+import { updateJob } from './jobStore.js';
+
+/** Clamp a crop rectangle so it always sits inside the image bounds. */
+function clampCrop({ x, y, width, height }, dimensions) {
+  const W = dimensions.width;
+  const H = dimensions.height;
+  const cx = Math.max(0, Math.min(Math.round(x), W - 1));
+  const cy = Math.max(0, Math.min(Math.round(y), H - 1));
+  const cw = Math.max(1, Math.min(Math.round(width), W - cx));
+  const ch = Math.max(1, Math.min(Math.round(height), H - cy));
+  return { x: cx, y: cy, width: cw, height: ch };
+}
 
 // Per-mode tuning parameters.
 const MODE_CONFIG = {
@@ -47,6 +59,9 @@ export async function processJob(job) {
     const downloaded = await downloadImage(job.inputUrl, UPLOADS_DIR);
     inputPath = downloaded.path;
     originalName = downloaded.filename;
+    // Persist the downloaded path so a later re-process / manual crop reuses
+    // the same local file (and the same pixel coordinate space).
+    updateJob(job.id, { inputPath });
   }
 
   if (!inputPath || !fs.existsSync(inputPath)) {
@@ -60,10 +75,25 @@ export async function processJob(job) {
   const meta = await sharp(inputPath).metadata();
   const dimensions = { width: meta.width || 0, height: meta.height || 0 };
 
-  // 2. Detect the print area.
-  const detection = await detectPrintArea(inputPath, dimensions);
+  // 2. Determine the crop area. A manual crop (drawn by the user) overrides AI
+  //    detection; otherwise we ask OpenAI Vision / the heuristic detector.
+  let detection;
+  if (job.manualCrop) {
+    const area = clampCrop(job.manualCrop, dimensions);
+    detection = {
+      print_found: true,
+      print_area: area,
+      garment_type: 'other',
+      print_type: 'graphic',
+      confidence: 0.9,
+      recommended_mode: mode,
+      source: 'manual',
+    };
+  } else {
+    detection = await detectPrintArea(inputPath, dimensions);
+  }
 
-  // 3. Crop to the detected print area.
+  // 3. Crop to the chosen print area.
   const area = detection.print_area;
   let pipeline = sharp(inputPath).extract({
     left: area.x,

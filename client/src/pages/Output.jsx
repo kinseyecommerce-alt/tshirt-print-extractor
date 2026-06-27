@@ -7,13 +7,13 @@ import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import BeforeAfter from '../components/BeforeAfter.jsx';
 import QualityReport from '../components/QualityReport.jsx';
-import { fetchJob, fileUrl, downloadUrl } from '../api.js';
+import CropEditor from '../components/CropEditor.jsx';
+import { fetchJob, fileUrl, downloadUrl, reprocessJob, sourceUrl } from '../api.js';
 
 const SIZES = [2000, 3000, 4500, 5000];
 
-// Editor tools that are stubbed for the first version.
+// Editor tools still stubbed for the first version (manual crop is functional).
 const EDITOR_TOOLS = [
-  'Manual crop box',
   'Rotate',
   'Perspective correction',
   'Magic erase brush',
@@ -27,12 +27,55 @@ export default function Output() {
   const [job, setJob] = useState(null);
   const [zoom, setZoom] = useState(1);
   const [error, setError] = useState('');
+  const [reprocessing, setReprocessing] = useState(false);
 
-  useEffect(() => {
+  const load = () =>
     fetchJob(id)
       .then((d) => setJob(d.job))
       .catch((e) => setError(e.message));
+
+  useEffect(() => {
+    load();
   }, [id]);
+
+  // While a re-process is running, poll until it settles again.
+  useEffect(() => {
+    if (!reprocessing) return;
+    const t = setInterval(async () => {
+      try {
+        const { job: latest } = await fetchJob(id);
+        setJob(latest);
+        if (latest.status === 'completed' || latest.status === 'failed') {
+          setReprocessing(false);
+        }
+      } catch {
+        /* ignore transient errors */
+      }
+    }, 2000);
+    return () => clearInterval(t);
+  }, [reprocessing, id]);
+
+  const applyCrop = async (manualCrop) => {
+    setReprocessing(true);
+    try {
+      const { job: updated } = await reprocessJob(id, { manualCrop, mode: job.mode });
+      setJob(updated);
+    } catch (e) {
+      setError(e.message);
+      setReprocessing(false);
+    }
+  };
+
+  const revertToAi = async () => {
+    setReprocessing(true);
+    try {
+      const { job: updated } = await reprocessJob(id, { manualCrop: null, mode: job.mode });
+      setJob(updated);
+    } catch (e) {
+      setError(e.message);
+      setReprocessing(false);
+    }
+  };
 
   if (error) return <p className="text-red-400">{error}</p>;
   if (!job) return <p className="text-slate-400">Loading…</p>;
@@ -65,10 +108,7 @@ export default function Output() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Preview + zoom */}
         <div className="space-y-4 lg:col-span-2">
-          <BeforeAfter
-            beforeSrc={job.inputUrl || (job.inputPath ? null : src)}
-            afterSrc={src}
-          />
+          <BeforeAfter beforeSrc={sourceUrl(job.id)} afterSrc={src} />
 
           <div className="card">
             <div className="mb-2 flex items-center justify-between">
@@ -94,9 +134,17 @@ export default function Output() {
             </div>
           </div>
 
-          {/* Placeholder editor tools */}
+          {/* Functional manual crop editor */}
+          <CropEditor
+            src={sourceUrl(job.id)}
+            onApply={applyCrop}
+            onReset={revertToAi}
+            busy={reprocessing}
+          />
+
+          {/* Remaining editor tools still stubbed for this version */}
           <div className="card">
-            <h3 className="mb-3 text-sm font-semibold text-slate-200">Editor tools</h3>
+            <h3 className="mb-3 text-sm font-semibold text-slate-200">More editor tools</h3>
             <div className="flex flex-wrap gap-2">
               {EDITOR_TOOLS.map((tool) => (
                 <button
@@ -110,7 +158,7 @@ export default function Output() {
               ))}
             </div>
             <p className="mt-2 text-xs text-slate-500">
-              Editor tools are placeholders in this first version.
+              These tools are placeholders in this first version.
             </p>
           </div>
         </div>

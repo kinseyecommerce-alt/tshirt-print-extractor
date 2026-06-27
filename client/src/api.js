@@ -50,6 +50,9 @@ export const fetchJobs = (batchId) =>
   api.get('/jobs', { params: batchId ? { batchId } : {} }).then((r) => r.data);
 export const fetchJob = (id) => api.get(`/jobs/${id}`).then((r) => r.data);
 export const retryJob = (id) => api.post(`/jobs/${id}/retry`).then((r) => r.data);
+export const reprocessJob = (id, payload) =>
+  api.post(`/jobs/${id}/reprocess`, payload).then((r) => r.data);
+export const sourceUrl = (id) => `/api/jobs/${id}/source`;
 
 // --- Download links ---------------------------------------------------------
 export const downloadUrl = (filename) => `/api/download/${encodeURIComponent(filename)}`;

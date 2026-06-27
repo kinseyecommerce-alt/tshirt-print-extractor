@@ -38,6 +38,7 @@ export function createJob(data) {
     outputFile: null, // filename within outputs/
     detection: null, // OpenAI / heuristic detection result
     quality: null, // quality-checker report
+    manualCrop: null, // optional user-drawn crop { x, y, width, height }
     createdAt: now,
     updatedAt: now,
   };

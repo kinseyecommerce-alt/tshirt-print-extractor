@@ -26,6 +26,23 @@ export function retry(jobId) {
   return getJob(jobId);
 }
 
+/**
+ * Re-run a job with new options (a manual crop and/or a different mode).
+ * Passing `manualCrop: null` clears a previous crop and reverts to AI detection.
+ * @param {string} jobId
+ * @param {{mode?:string, manualCrop?:object|null}} opts
+ */
+export function reprocess(jobId, opts = {}) {
+  const job = getJob(jobId);
+  if (!job) return null;
+  const patch = { status: 'pending', error: null };
+  if (opts.mode) patch.mode = opts.mode;
+  if ('manualCrop' in opts) patch.manualCrop = opts.manualCrop;
+  updateJob(jobId, patch);
+  enqueue(jobId);
+  return getJob(jobId);
+}
+
 /** Process queued jobs sequentially. */
 async function drain() {
   if (running) return;
