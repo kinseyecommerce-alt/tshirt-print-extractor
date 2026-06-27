@@ -207,12 +207,38 @@ async function generateJob(job) {
   return { outputFile: outName, detection, quality };
 }
 
+/** Hue (0-360) of an RGB pixel; returns -1 for achromatic (gray) pixels. */
+function hueOf(r, g, b) {
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const c = max - min;
+  if (c < 1) return -1;
+  let h;
+  if (max === r) h = ((g - b) / c) % 6;
+  else if (max === g) h = (b - r) / c + 2;
+  else h = (r - g) / c + 4;
+  h *= 60;
+  return h < 0 ? h + 360 : h;
+}
+
+/** Smallest absolute difference between two hues, accounting for wraparound. */
+function hueDist(a, b) {
+  const d = Math.abs(a - b) % 360;
+  return d > 180 ? 360 - d : d;
+}
+
 /**
- * Naive but effective chroma-key background removal.
- * Estimates the fabric color from the crop border ring, then sets the alpha
- * of every pixel near that color to 0, with feathering for edge refinement.
+ * Background removal for garment prints.
  *
- * Mutates `data` in place and returns the resulting transparency ratio (0-1).
+ * Two complementary signals are combined so a pixel is keyed out if EITHER
+ * fires (whichever removes more):
+ *  1. Color distance from the sampled border color (handles the exact shade).
+ *  2. Hue/saturation match to the garment color. This is what lets us strip a
+ *     *gradient* colored fabric (e.g. navy that's darker at the edges, lighter
+ *     behind the design) in one pass, while keeping low-saturation (grayscale)
+ *     print pixels. Only enabled when the garment itself is clearly colored.
+ *
+ * Mutates `data` in place; returns the resulting transparency ratio (0-1).
  */
 function removeBackground(data, info, threshold) {
   const { width, height, channels } = info;
@@ -236,27 +262,62 @@ function removeBackground(data, info, threshold) {
   }
   const br = rs / n, bg = gs / n, bb = bs / n;
 
+  // Garment color in hue/chroma terms.
+  const bgChroma = Math.max(br, bg, bb) - Math.min(br, bg, bb);
+  const bgHue = hueOf(br, bg, bb);
+  const bgIsColored = bgChroma > 25 && bgHue >= 0; // colored fabric, not gray
+  // Dominant channel of the fabric color (e.g. blue for navy) — used to
+  // suppress colored "spill" that tints the kept print pixels.
+  const bgDom = bb >= br && bb >= bg ? 2 : bg >= br ? 1 : 0;
+
   const tLow = threshold;          // fully transparent below this distance
   const tHigh = threshold * 1.8;   // fully opaque above this distance
+  const sLow = 16;                 // chroma below this is treated as grayscale (kept)
+  const sHigh = 44;                // chroma above this (and bg-hue) is fabric (removed)
+  const hTol = 42;                 // hue tolerance (degrees) for fabric match
   let transparent = 0;
   const total = width * height;
 
   for (let p = 0; p < total; p += 1) {
     const i = p * channels;
-    const dr = data[i] - br;
-    const dg = data[i + 1] - bg;
-    const db = data[i + 2] - bb;
-    const dist = Math.sqrt(dr * dr + dg * dg + db * db);
+    const r = data[i], g = data[i + 1], b = data[i + 2];
 
-    if (dist <= tLow) {
-      data[i + 3] = 0; // background -> transparent
-      transparent += 1;
-    } else if (dist < tHigh) {
-      // Feather the transition for cleaner edges.
-      const alpha = Math.round(((dist - tLow) / (tHigh - tLow)) * 255);
-      data[i + 3] = alpha;
+    // Signal 1: distance to the sampled background color.
+    const dr = r - br, dg = g - bg, db = b - bb;
+    const dist = Math.sqrt(dr * dr + dg * dg + db * db);
+    let alphaDist;
+    if (dist <= tLow) alphaDist = 0;
+    else if (dist < tHigh) alphaDist = Math.round(((dist - tLow) / (tHigh - tLow)) * 255);
+    else alphaDist = 255;
+
+    // Signal 2: hue/saturation match to a colored garment.
+    let alphaHue = 255;
+    if (bgIsColored) {
+      const chroma = Math.max(r, g, b) - Math.min(r, g, b);
+      const h = hueOf(r, g, b);
+      if (h >= 0 && hueDist(h, bgHue) <= hTol) {
+        if (chroma >= sHigh) {
+          alphaHue = 0; // saturated fabric color -> remove
+        } else if (chroma > sLow) {
+          // Feather: more saturated -> more transparent.
+          alphaHue = Math.round(((sHigh - chroma) / (sHigh - sLow)) * 255);
+        }
+      }
     }
-    // else: keep fully opaque (part of the print)
+
+    const alpha = Math.min(alphaDist, alphaHue);
+    data[i + 3] = alpha;
+    if (alpha === 0) {
+      transparent += 1;
+    } else if (bgIsColored) {
+      // Spill suppression: stop the fabric's dominant channel from exceeding the
+      // other two on kept pixels, neutralizing the colored fringe/cast so a
+      // grayscale print reads as clean black/white/gray.
+      const o1 = bgDom === 0 ? 1 : 0;
+      const o2 = bgDom === 2 ? 1 : 2;
+      const cap = Math.max(data[i + o1], data[i + o2]);
+      if (data[i + bgDom] > cap) data[i + bgDom] = cap;
+    }
   }
 
   return transparent / total;
