@@ -203,6 +203,14 @@ export default function Output() {
               <p>Confidence: {Math.round((job.detection.confidence || 0) * 100)}%</p>
               <p>Recommended mode: {job.detection.recommended_mode}</p>
               <p>Source: {job.detection.source}</p>
+              {job.detection.bgRemoval && job.detection.bgRemoval !== 'none' && (
+                <p>
+                  Cutout:{' '}
+                  {job.detection.bgRemoval.startsWith('ai:')
+                    ? `AI matting (${job.detection.bgRemoval.slice(3)})`
+                    : 'color key'}
+                </p>
+              )}
             </div>
           )}
         </div>

@@ -23,6 +23,26 @@ import { detectPrintArea } from './openai.js';
 import { downloadImage } from './scraper.js';
 import { updateJob } from './jobStore.js';
 import { generateDesign } from './designGenerator.js';
+import { removeBackgroundAI, aiBgRemovalProvider } from './bgRemover.js';
+
+/** Fraction of fully/partly transparent pixels in a PNG buffer (0-1). */
+async function alphaTransparencyRatio(pngBuffer) {
+  try {
+    const { data, info } = await sharp(pngBuffer)
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    const total = info.width * info.height;
+    if (!total) return 0;
+    let transparent = 0;
+    for (let p = 0; p < total; p += 1) {
+      if (data[p * info.channels + (info.channels - 1)] < 16) transparent += 1;
+    }
+    return transparent / total;
+  } catch {
+    return 0;
+  }
+}
 
 /** Clamp a crop rectangle so it always sits inside the image bounds. */
 function clampCrop({ x, y, width, height }, dimensions) {
@@ -132,29 +152,44 @@ export async function processJob(job) {
 
   // 3. Crop to the chosen print area.
   const area = detection.print_area;
-  let pipeline = sharp(inputPath).extract({
-    left: area.x,
-    top: area.y,
-    width: area.width,
-    height: area.height,
-  });
+  const cropExtract = { left: area.x, top: area.y, width: area.width, height: area.height };
 
-  // Ensure RGBA so we always have an alpha channel to work with.
-  let { data, info } = await pipeline
-    .ensureAlpha()
-    .raw()
-    .toBuffer({ resolveWithObject: true });
-
-  // 4. Remove fabric/background by keying out the dominant border color.
+  // 4. Remove fabric/background. Prefer a hosted AI matting API (world-class
+  //    cutout, run on the tight print crop); fall back to the built-in color
+  //    key when no provider is configured or the API call fails.
+  let out;
   let transparencyRatio = 0;
+  let bgRemoval = 'none';
+
+  let aiPng = null;
   if (cfg.removeBackground) {
-    transparencyRatio = removeBackground(data, info, cfg.threshold);
+    const provider = aiBgRemovalProvider();
+    if (provider) {
+      const croppedPng = await sharp(inputPath).extract(cropExtract).png().toBuffer();
+      aiPng = await removeBackgroundAI(croppedPng);
+      if (aiPng) bgRemoval = `ai:${provider}`;
+    }
   }
 
-  // Rebuild an image from the modified raw buffer.
-  let out = sharp(data, {
-    raw: { width: info.width, height: info.height, channels: info.channels },
-  });
+  if (aiPng) {
+    // AI matting succeeded — use its clean cutout directly.
+    out = sharp(aiPng).ensureAlpha();
+    transparencyRatio = await alphaTransparencyRatio(aiPng);
+  } else {
+    // Color-key path (also used for exact_crop, which keeps removeBackground off).
+    let { data, info } = await sharp(inputPath)
+      .extract(cropExtract)
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    if (cfg.removeBackground) {
+      transparencyRatio = removeBackground(data, info, cfg.threshold);
+      bgRemoval = 'chroma';
+    }
+    out = sharp(data, {
+      raw: { width: info.width, height: info.height, channels: info.channels },
+    });
+  }
 
   // 5. Cleanup: contrast + sharpen to refine edges and reduce fabric noise.
   if (cfg.contrast !== 1.0) {
@@ -178,10 +213,12 @@ export async function processJob(job) {
     .toFile(outPath);
 
   // 8. Quality checker on the produced file.
+  detection.bgRemoval = bgRemoval;
   const quality = await buildQualityReport(outPath, detection, {
     mode,
     transparencyRatio,
     sourceDimensions: dimensions,
+    bgRemoval,
   });
 
   return { outputFile: outName, detection, quality };
@@ -373,11 +410,14 @@ async function buildQualityReport(outPath, detection, ctx) {
     (stats.channels.length || 1);
 
   const warnings = [];
+  // The fabric/shadow/edge heuristics are tuned for the color-key path; AI
+  // matting produces a clean cutout, so skip those transparency-ratio warnings.
+  const isAi = (ctx.bgRemoval || '').startsWith('ai:');
   const lowRes = Math.min(width, height) < 700;
   const blurry = avgStdev < 18;
-  const fabricRemaining = ctx.mode !== 'exact_crop' && ctx.transparencyRatio < 0.08;
-  const shadowRemaining = ctx.mode !== 'exact_crop' && ctx.transparencyRatio < 0.04;
-  const edgeWarning = ctx.transparencyRatio > 0 && ctx.transparencyRatio < 0.05;
+  const fabricRemaining = !isAi && ctx.mode !== 'exact_crop' && ctx.transparencyRatio < 0.08;
+  const shadowRemaining = !isAi && ctx.mode !== 'exact_crop' && ctx.transparencyRatio < 0.04;
+  const edgeWarning = !isAi && ctx.transparencyRatio > 0 && ctx.transparencyRatio < 0.05;
 
   if (lowRes) warnings.push('Low resolution: upscale before printing for best results.');
   if (blurry) warnings.push('Possible blur detected in the extracted print.');
@@ -411,6 +451,7 @@ async function buildQualityReport(outPath, detection, ctx) {
     fabricTextureRemaining: fabricRemaining,
     shadowRemaining,
     edgeQualityWarning: edgeWarning,
+    bgRemoval: ctx.bgRemoval || 'none',
     printReadinessScore: score,
     // Placeholder: a real implementation would compare source vs output
     // embeddings. We approximate with detection confidence.

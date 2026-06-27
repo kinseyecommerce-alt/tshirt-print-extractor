@@ -18,6 +18,10 @@ detection (with a heuristic fallback when no API key is set).
   transparent background). Single or bulk (one design per prompt line), with
   square / portrait / landscape canvases. Falls back to a typographic
   placeholder when no API key is set, so the feature works end-to-end.
+- **AI cutout (NEW)** — optional hosted AI matting (Clipdrop / Photoroom /
+  remove.bg) for world-class clean edges. Runs on the detected print crop, so
+  it isolates just the artwork and removes residual neck/edge junk. Falls back
+  to the built-in color-key remover when no provider key is configured.
 - **AI Recreate (NEW)** — upload an existing print image and have the model
   redraw the *same* design (image-to-image) clean on a transparent background.
   Faithful to the original layout/elements; requires an OpenAI API key. Note:
@@ -97,10 +101,18 @@ cp .env.example .env
 PORT=3001
 OPENAI_API_KEY=          # optional — heuristic detection is used if empty
 OPENAI_MODEL=gpt-4o-mini
+OPENAI_IMAGE_MODEL=gpt-image-1
 SESSION_SECRET=a-long-random-secret
 APP_USERNAME=jagadeesh
 APP_PASSWORD=12345
 NODE_ENV=development
+
+# Optional AI cutout (world-class background removal). Without a key the app
+# falls back to the built-in color-key remover.
+BG_REMOVAL_PROVIDER=     # clipdrop | photoroom | removebg (auto-detected if blank)
+CLIPDROP_API_KEY=
+PHOTOROOM_API_KEY=
+REMOVEBG_API_KEY=
 ```
 
 > **Never commit your real `.env`** — it is gitignored. API keys are read from

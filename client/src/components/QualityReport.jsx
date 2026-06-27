@@ -45,6 +45,14 @@ export default function QualityReport({ quality }) {
       <p className="mt-3 text-xs text-slate-500">
         Output size: {quality.width}×{quality.height}px
       </p>
+      {quality.bgRemoval && quality.bgRemoval !== 'none' && (
+        <p className="mt-1 text-xs text-slate-500">
+          Background:{' '}
+          {quality.bgRemoval.startsWith('ai:')
+            ? `AI matting (${quality.bgRemoval.slice(3)})`
+            : 'color key'}
+        </p>
+      )}
 
       {quality.warnings?.length > 0 && (
         <ul className="mt-3 space-y-1">
