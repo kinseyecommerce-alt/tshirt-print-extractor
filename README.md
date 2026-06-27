@@ -18,6 +18,11 @@ detection (with a heuristic fallback when no API key is set).
   transparent background). Single or bulk (one design per prompt line), with
   square / portrait / landscape canvases. Falls back to a typographic
   placeholder when no API key is set, so the feature works end-to-end.
+- **AI Recreate (NEW)** — upload an existing print image and have the model
+  redraw the *same* design (image-to-image) clean on a transparent background.
+  Faithful to the original layout/elements; requires an OpenAI API key. Note:
+  very small text may be slightly altered by the redraw — use Extract mode when
+  pixel-exact text is required.
 - **Required session login** (username/password from environment variables).
 - **6 input modes**
   1. Single image upload
@@ -175,6 +180,7 @@ Open <http://localhost:3001>.
 | POST | `/api/url/csv` | Jobs from a CSV/Excel of URLs |
 | POST | `/api/create/single` | Generate one design from a text prompt |
 | POST | `/api/create/bulk` | Generate one design per prompt line |
+| POST | `/api/create/recreate` | Recreate a print from an uploaded image (image-to-image) |
 | GET | `/api/jobs` | List jobs (`?batchId=` filter) |
 | GET | `/api/jobs/:id` | Get one job |
 | POST | `/api/jobs/:id/retry` | Retry a job |

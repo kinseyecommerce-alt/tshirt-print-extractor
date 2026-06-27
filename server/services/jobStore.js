@@ -38,6 +38,7 @@ export function createJob(data) {
     batchId: data.batchId || null,
     prompt: data.prompt || null, // text prompt for generate jobs
     genSize: data.genSize || null, // requested generation aspect/size
+    referencePath: data.referencePath || null, // source image for AI recreate
     status: /** @type {JobStatus} */ ('pending'),
     error: null,
     outputFile: null, // filename within outputs/

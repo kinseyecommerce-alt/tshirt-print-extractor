@@ -6,7 +6,7 @@
 // it falls back to a typographic SVG placeholder so the feature still produces
 // a real transparent PNG end-to-end.
 // ============================================================
-import OpenAI from 'openai';
+import OpenAI, { toFile } from 'openai';
 import sharp from 'sharp';
 
 const IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1';
@@ -40,39 +40,81 @@ function buildPrompt(userPrompt, mode) {
 }
 
 /**
- * Generate a new design.
- * @param {string} prompt    user's text description
- * @param {object} opts      { size:'square'|'portrait'|'landscape', mode }
+ * Build a prompt that redraws an EXISTING print faithfully (image-to-image).
+ */
+function buildRecreatePrompt(userPrompt) {
+  const extra = userPrompt && userPrompt.trim() ? ` ${userPrompt.trim()}.` : '';
+  return (
+    `Faithfully recreate the printed graphic design shown in this image as ` +
+    `clean, high-resolution artwork. Preserve all text, lettering, layout and ` +
+    `graphic elements as closely as possible. Remove the garment/fabric, any ` +
+    `person, shadows, wrinkles and photo background. Output ONLY the isolated ` +
+    `print on a fully transparent background, suitable for direct-to-film (DTF) ` +
+    `printing.${extra}`
+  );
+}
+
+/**
+ * Generate a design. Two modes:
+ *  - text-to-image (default): invent a NEW design from the prompt
+ *  - image-to-image (opts.referencePath set): faithfully recreate an existing
+ *    print from a reference image (OpenAI image edit endpoint)
+ *
+ * @param {string} prompt    user's text description (optional for recreate)
+ * @param {object} opts      { size, mode, referencePath }
  * @returns {Promise<{buffer:Buffer, source:'openai'|'placeholder', note?:string}>}
  */
 export async function generateDesign(prompt, opts = {}) {
   const apiKey = process.env.OPENAI_API_KEY;
   const size = SIZE_MAP[opts.size] || SIZE_MAP.square;
+  const isRecreate = !!opts.referencePath;
 
   if (!apiKey) {
-    const buffer = await placeholderDesign(prompt, size);
+    const buffer = await placeholderDesign(prompt || 'design', size);
     return {
       buffer,
       source: 'placeholder',
-      note: 'OPENAI_API_KEY not set - generated a typographic placeholder instead of AI art.',
+      note: isRecreate
+        ? 'OPENAI_API_KEY required to recreate from an image - returned a placeholder.'
+        : 'OPENAI_API_KEY not set - generated a typographic placeholder instead of AI art.',
     };
   }
 
   try {
     const client = new OpenAI({ apiKey });
-    const result = await client.images.generate({
-      model: IMAGE_MODEL,
-      prompt: buildPrompt(prompt, opts.mode),
-      size,
-      background: 'transparent',
-      n: 1,
-    });
+    let result;
+
+    if (isRecreate) {
+      // Normalize the reference to a real PNG buffer with an explicit mimetype
+      // (a raw read stream is sent as application/octet-stream, which the edit
+      // API rejects). toFile attaches the correct filename + type.
+      const pngBuffer = await sharp(opts.referencePath).png().toBuffer();
+      const imageFile = await toFile(pngBuffer, 'reference.png', { type: 'image/png' });
+      // Image-to-image: redraw the reference print on a transparent background.
+      result = await client.images.edit({
+        model: IMAGE_MODEL,
+        image: imageFile,
+        prompt: buildRecreatePrompt(prompt),
+        size,
+        background: 'transparent',
+        n: 1,
+      });
+    } else {
+      result = await client.images.generate({
+        model: IMAGE_MODEL,
+        prompt: buildPrompt(prompt, opts.mode),
+        size,
+        background: 'transparent',
+        n: 1,
+      });
+    }
+
     const b64 = result.data?.[0]?.b64_json;
     if (!b64) throw new Error('Image API returned no image data.');
     return { buffer: Buffer.from(b64, 'base64'), source: 'openai' };
   } catch (err) {
     console.error('[generate] image API failed, using placeholder:', err.message);
-    const buffer = await placeholderDesign(prompt, size);
+    const buffer = await placeholderDesign(prompt || 'design', size);
     return { buffer, source: 'placeholder', note: err.message };
   }
 }

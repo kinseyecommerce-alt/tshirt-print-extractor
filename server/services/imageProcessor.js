@@ -163,12 +163,15 @@ export async function processJob(job) {
  * @returns {Promise<{outputFile:string, detection:object, quality:object}>}
  */
 async function generateJob(job) {
-  if (!job.prompt) throw new Error('A text prompt is required to generate a design.');
+  if (!job.prompt && !job.referencePath) {
+    throw new Error('A text prompt or a reference image is required to generate a design.');
+  }
 
   const mode = MODE_CONFIG[job.mode] ? job.mode : 'dtf_ready';
   const { buffer, source, note } = await generateDesign(job.prompt, {
     size: job.genSize,
     mode,
+    referencePath: job.referencePath,
   });
 
   // Light cleanup pass; keep the alpha channel intact.
@@ -179,7 +182,8 @@ async function generateJob(job) {
     .withMetadata({ density: 300 })
     .toBuffer();
 
-  const outName = outputFileName(job.prompt.slice(0, 40) || 'design');
+  const nameSeed = (job.prompt || job.source || 'design').slice(0, 40);
+  const outName = outputFileName(job.referencePath ? `recreate-${nameSeed}` : nameSeed);
   const outPath = path.join(OUTPUTS_DIR, outName);
   await sharp(cleaned).toFile(outPath);
 

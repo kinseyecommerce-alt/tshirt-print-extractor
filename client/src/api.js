@@ -50,6 +50,8 @@ export const createDesign = (payload) =>
   api.post('/create/single', payload).then((r) => r.data);
 export const createDesignsBulk = (payload) =>
   api.post('/create/bulk', payload).then((r) => r.data);
+export const recreateDesign = (formData) =>
+  api.post('/create/recreate', formData).then((r) => r.data);
 
 // --- Jobs -------------------------------------------------------------------
 export const fetchJobs = (batchId) =>
