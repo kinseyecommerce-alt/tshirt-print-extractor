@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+client/node_modules/
+
+# Environment
+.env
+.env.local
+
+# Build output
+client/dist/
+
+# Runtime storage (generated at runtime)
+uploads/
+outputs/
+!uploads/.gitkeep
+!outputs/.gitkeep
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Replit
+.upm/
+.config/
