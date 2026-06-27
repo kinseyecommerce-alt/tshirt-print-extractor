@@ -35,6 +35,34 @@ function clampCrop({ x, y, width, height }, dimensions) {
   return { x: cx, y: cy, width: cw, height: ch };
 }
 
+/**
+ * Expand a crop rectangle outward by a fraction of its own size, clamped to the
+ * image. Used only for AUTO-detected boxes: Vision boxes can be slightly tight,
+ * and a small fabric margin both avoids clipping the print and ensures the
+ * background-color sampler reads fabric (not ink). The later trim() removes the
+ * extra margin once it is keyed transparent, so the final PNG stays tight.
+ */
+function padCrop(area, dimensions, fraction) {
+  const padX = Math.round(area.width * fraction);
+  const padY = Math.round(area.height * fraction);
+  return clampCrop(
+    {
+      x: area.x - padX,
+      y: area.y - padY,
+      width: area.width + padX * 2,
+      height: area.height + padY * 2,
+    },
+    dimensions
+  );
+}
+
+// Fraction added on each side of an auto-detected print box before cropping.
+// Enough fabric margin for the background-color sampler and to avoid clipping
+// the design when the Vision box is slightly tight. Content immediately outside
+// the box (e.g. the wearer's neck just above a chest print) can survive and is
+// removed with the manual crop tool.
+const AUTO_PAD_FRACTION = 0.08;
+
 // Per-mode tuning parameters.
 const MODE_CONFIG = {
   exact_crop: { removeBackground: false, sharpen: 0, contrast: 1.0, threshold: 0 },
@@ -97,6 +125,9 @@ export async function processJob(job) {
     };
   } else {
     detection = await detectPrintArea(inputPath, dimensions);
+    // Pad auto-detected boxes outward (never manual crops) so the full print is
+    // captured and the background sampler reads fabric; trim() tightens later.
+    detection.print_area = padCrop(detection.print_area, dimensions, AUTO_PAD_FRACTION);
   }
 
   // 3. Crop to the chosen print area.
@@ -354,6 +385,12 @@ async function buildQualityReport(outPath, detection, ctx) {
   if (shadowRemaining) warnings.push('Shadows may still be present in the output.');
   if (edgeWarning) warnings.push('Edge quality is uncertain - review the preview.');
   if (!hasAlpha) warnings.push('Output does not contain a transparent background.');
+  // Auto-detection was unsure where the print is - point the user to the crop tool.
+  if (detection.source !== 'manual' && (detection.confidence || 0) < 0.55) {
+    warnings.push(
+      'AI auto-detection was uncertain. If extra background or UI is included, use the manual crop tool to refine.'
+    );
+  }
 
   // Print-readiness score (0-100): start high, subtract for each issue.
   let score = 100;

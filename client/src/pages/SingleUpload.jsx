@@ -65,7 +65,8 @@ export default function SingleUpload() {
       <div>
         <h1 className="text-2xl font-semibold">Single Upload</h1>
         <p className="text-sm text-slate-400">
-          Upload one garment image and extract the print as a transparent PNG.
+          Upload one garment image. The print is automatically detected and extracted as a
+          transparent PNG — no cropping needed.
         </p>
       </div>
 
@@ -84,7 +85,7 @@ export default function SingleUpload() {
           <Consent checked={consent} onChange={setConsent} />
           {error && <p className="text-sm text-red-400">{error}</p>}
           <button onClick={submit} disabled={busy} className="btn-primary w-full">
-            {busy ? 'Uploading…' : 'Extract Print'}
+            {busy ? 'Uploading…' : 'Auto-Extract Print'}
           </button>
         </div>
 
