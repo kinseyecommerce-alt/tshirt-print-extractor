@@ -1,0 +1,22 @@
+# Replit configuration
+# Builds the React client then starts the production Express server.
+run = "npm run start"
+entrypoint = "server/index.js"
+modules = ["nodejs-20"]
+
+hidden = [".config", "node_modules", "client/node_modules", "client/dist"]
+
+[nix]
+channel = "stable-23_11"
+
+[env]
+NODE_ENV = "production"
+
+[deployment]
+run = ["sh", "-c", "npm run start"]
+build = ["sh", "-c", "npm run install:all && npm run build"]
+deploymentTarget = "cloudrun"
+
+[[ports]]
+localPort = 3001
+externalPort = 80
