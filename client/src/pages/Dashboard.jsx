@@ -7,6 +7,7 @@ import { fetchJobs } from '../api.js';
 import JobList from '../components/JobList.jsx';
 
 const ACTIONS = [
+  { to: '/create', title: 'Create Design', desc: 'Generate a new print from text.' },
   { to: '/upload/single', title: 'Single Upload', desc: 'Upload one garment image.' },
   { to: '/upload/bulk', title: 'Bulk Upload', desc: 'Upload many images or a ZIP.' },
   { to: '/url/single', title: 'Single URL', desc: 'Extract from one product URL.' },

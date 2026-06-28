@@ -27,12 +27,18 @@ export function createJob(data) {
   const now = new Date().toISOString();
   const job = {
     id,
+    // kind: 'extract' (default) pulls a print out of a garment image;
+    // 'generate' creates a brand-new design from a text prompt.
+    kind: data.kind || 'extract',
     source: data.source,
     sourceType: data.sourceType,
     mode: data.mode || 'dtf_ready',
     inputPath: data.inputPath || null,
     inputUrl: data.inputUrl || null,
     batchId: data.batchId || null,
+    prompt: data.prompt || null, // text prompt for generate jobs
+    genSize: data.genSize || null, // requested generation aspect/size
+    referencePath: data.referencePath || null, // source image for AI recreate
     status: /** @type {JobStatus} */ ('pending'),
     error: null,
     outputFile: null, // filename within outputs/

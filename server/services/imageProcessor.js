@@ -22,6 +22,27 @@ import { OUTPUTS_DIR, UPLOADS_DIR, outputFileName, ensureDir } from '../utils/fi
 import { detectPrintArea } from './openai.js';
 import { downloadImage } from './scraper.js';
 import { updateJob } from './jobStore.js';
+import { generateDesign } from './designGenerator.js';
+import { removeBackgroundAI, aiBgRemovalProvider } from './bgRemover.js';
+
+/** Fraction of fully/partly transparent pixels in a PNG buffer (0-1). */
+async function alphaTransparencyRatio(pngBuffer) {
+  try {
+    const { data, info } = await sharp(pngBuffer)
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    const total = info.width * info.height;
+    if (!total) return 0;
+    let transparent = 0;
+    for (let p = 0; p < total; p += 1) {
+      if (data[p * info.channels + (info.channels - 1)] < 16) transparent += 1;
+    }
+    return transparent / total;
+  } catch {
+    return 0;
+  }
+}
 
 /** Clamp a crop rectangle so it always sits inside the image bounds. */
 function clampCrop({ x, y, width, height }, dimensions) {
@@ -33,6 +54,34 @@ function clampCrop({ x, y, width, height }, dimensions) {
   const ch = Math.max(1, Math.min(Math.round(height), H - cy));
   return { x: cx, y: cy, width: cw, height: ch };
 }
+
+/**
+ * Expand a crop rectangle outward by a fraction of its own size, clamped to the
+ * image. Used only for AUTO-detected boxes: Vision boxes can be slightly tight,
+ * and a small fabric margin both avoids clipping the print and ensures the
+ * background-color sampler reads fabric (not ink). The later trim() removes the
+ * extra margin once it is keyed transparent, so the final PNG stays tight.
+ */
+function padCrop(area, dimensions, fraction) {
+  const padX = Math.round(area.width * fraction);
+  const padY = Math.round(area.height * fraction);
+  return clampCrop(
+    {
+      x: area.x - padX,
+      y: area.y - padY,
+      width: area.width + padX * 2,
+      height: area.height + padY * 2,
+    },
+    dimensions
+  );
+}
+
+// Fraction added on each side of an auto-detected print box before cropping.
+// Enough fabric margin for the background-color sampler and to avoid clipping
+// the design when the Vision box is slightly tight. Content immediately outside
+// the box (e.g. the wearer's neck just above a chest print) can survive and is
+// removed with the manual crop tool.
+const AUTO_PAD_FRACTION = 0.08;
 
 // Per-mode tuning parameters.
 const MODE_CONFIG = {
@@ -50,6 +99,11 @@ const MODE_CONFIG = {
  */
 export async function processJob(job) {
   ensureDir(OUTPUTS_DIR);
+
+  // Generate-kind jobs create brand-new artwork instead of extracting a print.
+  if (job.kind === 'generate') {
+    return generateJob(job);
+  }
 
   // 1. Resolve the source image to a local file path.
   let inputPath = job.inputPath;
@@ -91,33 +145,51 @@ export async function processJob(job) {
     };
   } else {
     detection = await detectPrintArea(inputPath, dimensions);
+    // Pad auto-detected boxes outward (never manual crops) so the full print is
+    // captured and the background sampler reads fabric; trim() tightens later.
+    detection.print_area = padCrop(detection.print_area, dimensions, AUTO_PAD_FRACTION);
   }
 
   // 3. Crop to the chosen print area.
   const area = detection.print_area;
-  let pipeline = sharp(inputPath).extract({
-    left: area.x,
-    top: area.y,
-    width: area.width,
-    height: area.height,
-  });
+  const cropExtract = { left: area.x, top: area.y, width: area.width, height: area.height };
 
-  // Ensure RGBA so we always have an alpha channel to work with.
-  let { data, info } = await pipeline
-    .ensureAlpha()
-    .raw()
-    .toBuffer({ resolveWithObject: true });
-
-  // 4. Remove fabric/background by keying out the dominant border color.
+  // 4. Remove fabric/background. Prefer a hosted AI matting API (world-class
+  //    cutout, run on the tight print crop); fall back to the built-in color
+  //    key when no provider is configured or the API call fails.
+  let out;
   let transparencyRatio = 0;
+  let bgRemoval = 'none';
+
+  let aiPng = null;
   if (cfg.removeBackground) {
-    transparencyRatio = removeBackground(data, info, cfg.threshold);
+    const provider = aiBgRemovalProvider();
+    if (provider) {
+      const croppedPng = await sharp(inputPath).extract(cropExtract).png().toBuffer();
+      aiPng = await removeBackgroundAI(croppedPng);
+      if (aiPng) bgRemoval = `ai:${provider}`;
+    }
   }
 
-  // Rebuild an image from the modified raw buffer.
-  let out = sharp(data, {
-    raw: { width: info.width, height: info.height, channels: info.channels },
-  });
+  if (aiPng) {
+    // AI matting succeeded — use its clean cutout directly.
+    out = sharp(aiPng).ensureAlpha();
+    transparencyRatio = await alphaTransparencyRatio(aiPng);
+  } else {
+    // Color-key path (also used for exact_crop, which keeps removeBackground off).
+    let { data, info } = await sharp(inputPath)
+      .extract(cropExtract)
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    if (cfg.removeBackground) {
+      transparencyRatio = removeBackground(data, info, cfg.threshold);
+      bgRemoval = 'chroma';
+    }
+    out = sharp(data, {
+      raw: { width: info.width, height: info.height, channels: info.channels },
+    });
+  }
 
   // 5. Cleanup: contrast + sharpen to refine edges and reduce fabric noise.
   if (cfg.contrast !== 1.0) {
@@ -141,21 +213,100 @@ export async function processJob(job) {
     .toFile(outPath);
 
   // 8. Quality checker on the produced file.
+  detection.bgRemoval = bgRemoval;
   const quality = await buildQualityReport(outPath, detection, {
     mode,
     transparencyRatio,
     sourceDimensions: dimensions,
+    bgRemoval,
   });
 
   return { outputFile: outName, detection, quality };
 }
 
 /**
- * Naive but effective chroma-key background removal.
- * Estimates the fabric color from the crop border ring, then sets the alpha
- * of every pixel near that color to 0, with feathering for edge refinement.
+ * Generate-kind pipeline: create a brand-new transparent design from the job's
+ * text prompt, save it, and run the quality checker on the result.
+ * @param {object} job
+ * @returns {Promise<{outputFile:string, detection:object, quality:object}>}
+ */
+async function generateJob(job) {
+  if (!job.prompt && !job.referencePath) {
+    throw new Error('A text prompt or a reference image is required to generate a design.');
+  }
+
+  const mode = MODE_CONFIG[job.mode] ? job.mode : 'dtf_ready';
+  const { buffer, source, note } = await generateDesign(job.prompt, {
+    size: job.genSize,
+    mode,
+    referencePath: job.referencePath,
+  });
+
+  // Light cleanup pass; keep the alpha channel intact.
+  const cleaned = await sharp(buffer)
+    .ensureAlpha()
+    .sharpen({ sigma: 0.5 })
+    .png({ compressionLevel: 9 })
+    .withMetadata({ density: 300 })
+    .toBuffer();
+
+  const nameSeed = (job.prompt || job.source || 'design').slice(0, 40);
+  const outName = outputFileName(job.referencePath ? `recreate-${nameSeed}` : nameSeed);
+  const outPath = path.join(OUTPUTS_DIR, outName);
+  await sharp(cleaned).toFile(outPath);
+
+  const meta = await sharp(outPath).metadata();
+  const detection = {
+    print_found: true,
+    garment_type: 'n/a',
+    print_type: 'generated',
+    confidence: source === 'openai' ? 0.9 : 0.5,
+    recommended_mode: mode,
+    source,
+    note,
+  };
+
+  const quality = await buildQualityReport(outPath, detection, {
+    mode,
+    transparencyRatio: 0.5, // generated art is created on transparent canvas
+    sourceDimensions: { width: meta.width || 0, height: meta.height || 0 },
+  });
+
+  return { outputFile: outName, detection, quality };
+}
+
+/** Hue (0-360) of an RGB pixel; returns -1 for achromatic (gray) pixels. */
+function hueOf(r, g, b) {
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const c = max - min;
+  if (c < 1) return -1;
+  let h;
+  if (max === r) h = ((g - b) / c) % 6;
+  else if (max === g) h = (b - r) / c + 2;
+  else h = (r - g) / c + 4;
+  h *= 60;
+  return h < 0 ? h + 360 : h;
+}
+
+/** Smallest absolute difference between two hues, accounting for wraparound. */
+function hueDist(a, b) {
+  const d = Math.abs(a - b) % 360;
+  return d > 180 ? 360 - d : d;
+}
+
+/**
+ * Background removal for garment prints.
  *
- * Mutates `data` in place and returns the resulting transparency ratio (0-1).
+ * Two complementary signals are combined so a pixel is keyed out if EITHER
+ * fires (whichever removes more):
+ *  1. Color distance from the sampled border color (handles the exact shade).
+ *  2. Hue/saturation match to the garment color. This is what lets us strip a
+ *     *gradient* colored fabric (e.g. navy that's darker at the edges, lighter
+ *     behind the design) in one pass, while keeping low-saturation (grayscale)
+ *     print pixels. Only enabled when the garment itself is clearly colored.
+ *
+ * Mutates `data` in place; returns the resulting transparency ratio (0-1).
  */
 function removeBackground(data, info, threshold) {
   const { width, height, channels } = info;
@@ -179,27 +330,62 @@ function removeBackground(data, info, threshold) {
   }
   const br = rs / n, bg = gs / n, bb = bs / n;
 
+  // Garment color in hue/chroma terms.
+  const bgChroma = Math.max(br, bg, bb) - Math.min(br, bg, bb);
+  const bgHue = hueOf(br, bg, bb);
+  const bgIsColored = bgChroma > 25 && bgHue >= 0; // colored fabric, not gray
+  // Dominant channel of the fabric color (e.g. blue for navy) — used to
+  // suppress colored "spill" that tints the kept print pixels.
+  const bgDom = bb >= br && bb >= bg ? 2 : bg >= br ? 1 : 0;
+
   const tLow = threshold;          // fully transparent below this distance
   const tHigh = threshold * 1.8;   // fully opaque above this distance
+  const sLow = 16;                 // chroma below this is treated as grayscale (kept)
+  const sHigh = 44;                // chroma above this (and bg-hue) is fabric (removed)
+  const hTol = 42;                 // hue tolerance (degrees) for fabric match
   let transparent = 0;
   const total = width * height;
 
   for (let p = 0; p < total; p += 1) {
     const i = p * channels;
-    const dr = data[i] - br;
-    const dg = data[i + 1] - bg;
-    const db = data[i + 2] - bb;
-    const dist = Math.sqrt(dr * dr + dg * dg + db * db);
+    const r = data[i], g = data[i + 1], b = data[i + 2];
 
-    if (dist <= tLow) {
-      data[i + 3] = 0; // background -> transparent
-      transparent += 1;
-    } else if (dist < tHigh) {
-      // Feather the transition for cleaner edges.
-      const alpha = Math.round(((dist - tLow) / (tHigh - tLow)) * 255);
-      data[i + 3] = alpha;
+    // Signal 1: distance to the sampled background color.
+    const dr = r - br, dg = g - bg, db = b - bb;
+    const dist = Math.sqrt(dr * dr + dg * dg + db * db);
+    let alphaDist;
+    if (dist <= tLow) alphaDist = 0;
+    else if (dist < tHigh) alphaDist = Math.round(((dist - tLow) / (tHigh - tLow)) * 255);
+    else alphaDist = 255;
+
+    // Signal 2: hue/saturation match to a colored garment.
+    let alphaHue = 255;
+    if (bgIsColored) {
+      const chroma = Math.max(r, g, b) - Math.min(r, g, b);
+      const h = hueOf(r, g, b);
+      if (h >= 0 && hueDist(h, bgHue) <= hTol) {
+        if (chroma >= sHigh) {
+          alphaHue = 0; // saturated fabric color -> remove
+        } else if (chroma > sLow) {
+          // Feather: more saturated -> more transparent.
+          alphaHue = Math.round(((sHigh - chroma) / (sHigh - sLow)) * 255);
+        }
+      }
     }
-    // else: keep fully opaque (part of the print)
+
+    const alpha = Math.min(alphaDist, alphaHue);
+    data[i + 3] = alpha;
+    if (alpha === 0) {
+      transparent += 1;
+    } else if (bgIsColored) {
+      // Spill suppression: stop the fabric's dominant channel from exceeding the
+      // other two on kept pixels, neutralizing the colored fringe/cast so a
+      // grayscale print reads as clean black/white/gray.
+      const o1 = bgDom === 0 ? 1 : 0;
+      const o2 = bgDom === 2 ? 1 : 2;
+      const cap = Math.max(data[i + o1], data[i + o2]);
+      if (data[i + bgDom] > cap) data[i + bgDom] = cap;
+    }
   }
 
   return transparent / total;
@@ -224,11 +410,14 @@ async function buildQualityReport(outPath, detection, ctx) {
     (stats.channels.length || 1);
 
   const warnings = [];
+  // The fabric/shadow/edge heuristics are tuned for the color-key path; AI
+  // matting produces a clean cutout, so skip those transparency-ratio warnings.
+  const isAi = (ctx.bgRemoval || '').startsWith('ai:');
   const lowRes = Math.min(width, height) < 700;
   const blurry = avgStdev < 18;
-  const fabricRemaining = ctx.mode !== 'exact_crop' && ctx.transparencyRatio < 0.08;
-  const shadowRemaining = ctx.mode !== 'exact_crop' && ctx.transparencyRatio < 0.04;
-  const edgeWarning = ctx.transparencyRatio > 0 && ctx.transparencyRatio < 0.05;
+  const fabricRemaining = !isAi && ctx.mode !== 'exact_crop' && ctx.transparencyRatio < 0.08;
+  const shadowRemaining = !isAi && ctx.mode !== 'exact_crop' && ctx.transparencyRatio < 0.04;
+  const edgeWarning = !isAi && ctx.transparencyRatio > 0 && ctx.transparencyRatio < 0.05;
 
   if (lowRes) warnings.push('Low resolution: upscale before printing for best results.');
   if (blurry) warnings.push('Possible blur detected in the extracted print.');
@@ -236,6 +425,12 @@ async function buildQualityReport(outPath, detection, ctx) {
   if (shadowRemaining) warnings.push('Shadows may still be present in the output.');
   if (edgeWarning) warnings.push('Edge quality is uncertain - review the preview.');
   if (!hasAlpha) warnings.push('Output does not contain a transparent background.');
+  // Auto-detection was unsure where the print is - point the user to the crop tool.
+  if (detection.source !== 'manual' && (detection.confidence || 0) < 0.55) {
+    warnings.push(
+      'AI auto-detection was uncertain. If extra background or UI is included, use the manual crop tool to refine.'
+    );
+  }
 
   // Print-readiness score (0-100): start high, subtract for each issue.
   let score = 100;
@@ -256,6 +451,7 @@ async function buildQualityReport(outPath, detection, ctx) {
     fabricTextureRemaining: fabricRemaining,
     shadowRemaining,
     edgeQualityWarning: edgeWarning,
+    bgRemoval: ctx.bgRemoval || 'none',
     printReadinessScore: score,
     // Placeholder: a real implementation would compare source vs output
     // embeddings. We approximate with detection confidence.

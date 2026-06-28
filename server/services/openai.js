@@ -26,6 +26,16 @@ Return ONLY valid JSON, no markdown, with this exact schema:
   "recommended_mode": "exact_crop" | "clean_png" | "ai_recreate" | "text_logo" | "dtf_ready"
 }
 
+Targeting rules - the print_area MUST tightly bound ONLY the printed artwork on the garment:
+- INCLUDE: every part of the printed design (text, logos, graphics) as one bounding box.
+- EXCLUDE everything that is not the print: the wearer's body (skin, neck, arms, hands),
+  the background wall/floor, hangers or mannequins, and ANY app/phone UI chrome such as the
+  status bar, buttons, color swatches, size/price labels, watermarks, ratings, and cart/share
+  icons. If the image is a shopping-app screenshot, box ONLY the graphic printed on the shirt
+  in the product photo, ignoring all surrounding interface elements.
+- If multiple separate prints exist, return the bounding box around the primary/largest one.
+- Make the box as tight as possible while still containing the whole design.
+
 The print_area coordinates are pixel values relative to the provided image dimensions
 (top-left origin). confidence is between 0 and 1. If there is no visible print,
 set print_found to false and return a print_area covering the central region.`;

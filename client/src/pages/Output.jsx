@@ -8,6 +8,7 @@ import { useParams, Link } from 'react-router-dom';
 import BeforeAfter from '../components/BeforeAfter.jsx';
 import QualityReport from '../components/QualityReport.jsx';
 import CropEditor from '../components/CropEditor.jsx';
+import MockupPreview from '../components/MockupPreview.jsx';
 import { fetchJob, fileUrl, downloadUrl, reprocessJob, sourceUrl } from '../api.js';
 
 const SIZES = [2000, 3000, 4500, 5000];
@@ -37,6 +38,18 @@ export default function Output() {
   useEffect(() => {
     load();
   }, [id]);
+
+  // Keyboard shortcut: press "D" to download the output (when completed).
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      if (e.key.toLowerCase() === 'd' && job?.status === 'completed' && job.outputFile) {
+        window.location.href = downloadUrl(job.outputFile);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [job]);
 
   // While a re-process is running, poll until it settles again.
   useEffect(() => {
@@ -108,7 +121,13 @@ export default function Output() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Preview + zoom */}
         <div className="space-y-4 lg:col-span-2">
-          <BeforeAfter beforeSrc={sourceUrl(job.id)} afterSrc={src} />
+          {job.kind === 'generate' ? (
+            <div className="checkerboard flex items-center justify-center rounded-xl border border-slate-800 p-4">
+              <img src={src} alt={job.source} className="max-h-96 max-w-full object-contain" />
+            </div>
+          ) : (
+            <BeforeAfter beforeSrc={sourceUrl(job.id)} afterSrc={src} />
+          )}
 
           <div className="card">
             <div className="mb-2 flex items-center justify-between">
@@ -134,13 +153,15 @@ export default function Output() {
             </div>
           </div>
 
-          {/* Functional manual crop editor */}
-          <CropEditor
-            src={sourceUrl(job.id)}
-            onApply={applyCrop}
-            onReset={revertToAi}
-            busy={reprocessing}
-          />
+          {/* Functional manual crop editor (extraction jobs only) */}
+          {job.kind !== 'generate' && (
+            <CropEditor
+              src={sourceUrl(job.id)}
+              onApply={applyCrop}
+              onReset={revertToAi}
+              busy={reprocessing}
+            />
+          )}
 
           {/* Remaining editor tools still stubbed for this version */}
           <div className="card">
@@ -185,6 +206,8 @@ export default function Output() {
             <p className="mt-2 text-xs text-slate-500">300 DPI metadata is embedded.</p>
           </div>
 
+          <MockupPreview src={src} />
+
           <QualityReport quality={job.quality} />
 
           {job.detection && (
@@ -195,6 +218,14 @@ export default function Output() {
               <p>Confidence: {Math.round((job.detection.confidence || 0) * 100)}%</p>
               <p>Recommended mode: {job.detection.recommended_mode}</p>
               <p>Source: {job.detection.source}</p>
+              {job.detection.bgRemoval && job.detection.bgRemoval !== 'none' && (
+                <p>
+                  Cutout:{' '}
+                  {job.detection.bgRemoval.startsWith('ai:')
+                    ? `AI matting (${job.detection.bgRemoval.slice(3)})`
+                    : 'color key'}
+                </p>
+              )}
             </div>
           )}
         </div>

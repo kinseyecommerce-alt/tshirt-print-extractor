@@ -3,6 +3,7 @@ import { useAuth } from './auth.jsx';
 import Layout from './components/Layout.jsx';
 import Login from './pages/Login.jsx';
 import Dashboard from './pages/Dashboard.jsx';
+import CreateDesign from './pages/CreateDesign.jsx';
 import SingleUpload from './pages/SingleUpload.jsx';
 import BulkUpload from './pages/BulkUpload.jsx';
 import SingleUrl from './pages/SingleUrl.jsx';
@@ -29,6 +30,7 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/" element={<Protected><Dashboard /></Protected>} />
+      <Route path="/create" element={<Protected><CreateDesign /></Protected>} />
       <Route path="/upload/single" element={<Protected><SingleUpload /></Protected>} />
       <Route path="/upload/bulk" element={<Protected><BulkUpload /></Protected>} />
       <Route path="/url/single" element={<Protected><SingleUrl /></Protected>} />
