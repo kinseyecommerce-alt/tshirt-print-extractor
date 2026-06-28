@@ -8,6 +8,7 @@ import { useParams, Link } from 'react-router-dom';
 import BeforeAfter from '../components/BeforeAfter.jsx';
 import QualityReport from '../components/QualityReport.jsx';
 import CropEditor from '../components/CropEditor.jsx';
+import MockupPreview from '../components/MockupPreview.jsx';
 import { fetchJob, fileUrl, downloadUrl, reprocessJob, sourceUrl } from '../api.js';
 
 const SIZES = [2000, 3000, 4500, 5000];
@@ -37,6 +38,18 @@ export default function Output() {
   useEffect(() => {
     load();
   }, [id]);
+
+  // Keyboard shortcut: press "D" to download the output (when completed).
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      if (e.key.toLowerCase() === 'd' && job?.status === 'completed' && job.outputFile) {
+        window.location.href = downloadUrl(job.outputFile);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [job]);
 
   // While a re-process is running, poll until it settles again.
   useEffect(() => {
@@ -192,6 +205,8 @@ export default function Output() {
             </div>
             <p className="mt-2 text-xs text-slate-500">300 DPI metadata is embedded.</p>
           </div>
+
+          <MockupPreview src={src} />
 
           <QualityReport quality={job.quality} />
 

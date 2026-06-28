@@ -8,9 +8,12 @@ import ModeSelect from '../components/ModeSelect.jsx';
 import Consent from '../components/Consent.jsx';
 import QualityReport from '../components/QualityReport.jsx';
 import BeforeAfter from '../components/BeforeAfter.jsx';
+import { SkeletonResult } from '../components/Skeleton.jsx';
+import { useToast } from '../components/Toast.jsx';
 import { uploadSingle, fetchJob, fileUrl, downloadUrl } from '../api.js';
 
 export default function SingleUpload() {
+  const toast = useToast();
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
   const [mode, setMode] = useState('dtf_ready');
@@ -27,9 +30,14 @@ export default function SingleUpload() {
     setError('');
   };
 
+  const fail = (msg) => {
+    setError(msg);
+    toast.error(msg);
+  };
+
   const submit = async () => {
-    if (!file) return setError('Please choose an image.');
-    if (!consent) return setError('Please confirm ownership before processing.');
+    if (!file) return fail('Please choose an image.');
+    if (!consent) return fail('Please confirm ownership before processing.');
     setError('');
     setBusy(true);
     try {
@@ -39,8 +47,9 @@ export default function SingleUpload() {
       fd.append('confirmOwnership', 'true');
       const { job: created } = await uploadSingle(fd);
       setJob(created);
+      toast.info('Uploaded — extracting the print…');
     } catch (err) {
-      setError(err.message);
+      fail(err.message);
     } finally {
       setBusy(false);
     }
@@ -53,12 +62,14 @@ export default function SingleUpload() {
       try {
         const { job: latest } = await fetchJob(job.id);
         setJob(latest);
+        if (latest.status === 'completed') toast.success('Print extracted — ready to download.');
+        if (latest.status === 'failed') toast.error(`Extraction failed: ${latest.error}`);
       } catch {
         /* ignore transient errors */
       }
     }, 2000);
     return () => clearInterval(t);
-  }, [job]);
+  }, [job, toast]);
 
   return (
     <div className="space-y-6">
@@ -98,9 +109,7 @@ export default function SingleUpload() {
           )}
 
           {job && job.status !== 'completed' && job.status !== 'failed' && (
-            <div className="card flex h-48 items-center justify-center text-sm text-slate-400">
-              {job.status === 'processing' ? 'Processing image…' : 'Queued…'}
-            </div>
+            <SkeletonResult label={job.status === 'processing' ? 'Extracting print…' : 'Queued…'} />
           )}
 
           {job?.status === 'failed' && (

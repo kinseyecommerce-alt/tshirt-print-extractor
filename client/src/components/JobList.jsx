@@ -4,6 +4,26 @@
 import { Link } from 'react-router-dom';
 import { fileUrl, downloadUrl, retryJob } from '../api.js';
 
+/** Friendly empty state with first-run guidance + CTAs. */
+export function EmptyState({
+  title = 'No jobs yet',
+  hint = 'Upload a garment to extract its print, or generate a brand-new design.',
+}) {
+  return (
+    <div className="card flex flex-col items-center justify-center gap-3 py-10 text-center">
+      <div className="text-4xl">🧵</div>
+      <div>
+        <p className="font-medium text-slate-200">{title}</p>
+        <p className="mt-1 text-sm text-slate-400">{hint}</p>
+      </div>
+      <div className="mt-1 flex flex-wrap justify-center gap-2">
+        <Link to="/upload/single" className="btn-primary">Upload a garment</Link>
+        <Link to="/create" className="btn-secondary">Create a design</Link>
+      </div>
+    </div>
+  );
+}
+
 const STATUS_STYLES = {
   pending: 'bg-slate-700 text-slate-200',
   processing: 'bg-amber-500/20 text-amber-300',
@@ -49,7 +69,7 @@ export default function JobList({ jobs, onChange }) {
   };
 
   if (!jobs?.length) {
-    return <p className="text-sm text-slate-500">No jobs yet.</p>;
+    return <EmptyState />;
   }
 
   return (
